@@ -7,9 +7,12 @@ import (
 	"fmt"
 	"io"
 	"io/ioutil"
+	"log"
 	"mime"
 	"mime/multipart"
 	"net/mail"
+	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -22,16 +25,27 @@ var user = flag.String("user", "", "your gmail address")
 var token = flag.String("token", "", "oauth access token. you can get one at https://developers.google.com/oauthplayground/")
 
 func main() {
+	imap.DefaultLogger = log.New(os.Stdout, "", 0)
+	imap.DefaultLogMask = imap.LogNone
 	flag.Parse()
 	if *user == "" || *token == "" {
 		flag.Usage()
 		return
 	}
-	_, err := fetch(*user, *token)
+	mails, err := fetch(*user, *token)
 	if err != nil {
 		fmt.Println("Error in my fetch: ", err)
 	}
-	fmt.Println("messages read:", numMessages)
+	byThread := make(map[uint64][]ParsedMail)
+	for _, m := range mails {
+		byThread[m.Thrid] = append(byThread[m.Thrid], m)
+	}
+	for k, ms := range byThread {
+		fmt.Println("Thread", k)
+		for _, m := range ms {
+			fmt.Println("    ", m.Header.Get("Subject"))
+		}
+	}
 }
 
 // https://stackoverflow.com/questions/6002619/unmarshal-an-iso-8859-1-xml-input-in-go
@@ -85,8 +99,6 @@ func getReader(charset string, r io.Reader) (io.Reader, error) {
 	return nil, errors.New("Unexpected charset: " + charset)
 }
 
-var numMessages int
-
 type oauthSASL struct {
 	user, token string
 }
@@ -102,6 +114,7 @@ func (o oauthSASL) Next(challenge []byte) ([]byte, error) {
 type ParsedMail struct {
 	Header mail.Header
 	Body   []byte
+	Thrid  uint64
 }
 
 func fetch(user, authToken string) ([]ParsedMail, error) {
@@ -115,7 +128,7 @@ func fetch(user, authToken string) ([]ParsedMail, error) {
 	}
 	c.Select("INBOX", true)
 	set, _ := imap.NewSeqSet("1:*")
-	cmd, err := imap.Wait(c.Fetch(set, "BODY.PEEK[]"))
+	cmd, err := imap.Wait(c.Fetch(set, "BODY.PEEK[]", "X-GM-THRID"))
 	if err != nil {
 		return nil, errors.New("fetch error: " + err.Error())
 	}
@@ -164,8 +177,8 @@ func fetch(user, authToken string) ([]ParsedMail, error) {
 					return nil, errors.New("error reading message body: " + err.Error())
 				}
 			}
-			parsed[i] = ParsedMail{Header: msg.Header, Body: body}
-			numMessages++
+			thrid, _ := strconv.ParseUint(imap.AsString(rsp.MessageInfo().Attrs["X-GM-THRID"]), 10, 64)
+			parsed[i] = ParsedMail{Header: msg.Header, Body: body, Thrid: thrid}
 		} else {
 			return nil, errors.New("failed to parse message")
 		}
