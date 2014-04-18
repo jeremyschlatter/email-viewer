@@ -11,7 +11,7 @@ var httpAddr = flag.String("http", ":8080", "port to listen to")
 
 type Data struct {
 	EmailAddress string
-	Messages     []ParsedMail
+	Messages     []*ParsedMail
 }
 
 func homeHandler(w http.ResponseWriter, r *http.Request) {

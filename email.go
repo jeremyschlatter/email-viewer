@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"io/ioutil"
+	"log"
 	"mime"
 	"mime/multipart"
 	"net/mail"
@@ -18,12 +19,12 @@ import (
 	"code.google.com/p/go.text/transform"
 )
 
-func sortByThreads(mails []ParsedMail) [][]ParsedMail {
-	byThread := make(map[uint64][]ParsedMail)
+func sortByThreads(mails []*ParsedMail) [][]*ParsedMail {
+	byThread := make(map[uint64][]*ParsedMail)
 	for _, m := range mails {
 		byThread[m.Thrid] = append(byThread[m.Thrid], m)
 	}
-	result := make([][]ParsedMail, 0, len(byThread))
+	result := make([][]*ParsedMail, 0, len(byThread))
 	for _, thread := range byThread {
 		result = append(result, thread)
 	}
@@ -98,7 +99,57 @@ type ParsedMail struct {
 	Thrid  uint64
 }
 
-func fetch(user, authToken string) ([]ParsedMail, error) {
+func parseMail(b []byte) (*ParsedMail, error) {
+	msg, err := mail.ReadMessage(bytes.NewReader(b))
+	if err != nil {
+		return nil, errors.New("failed to parse message: " + err.Error())
+	}
+	var body []byte
+	if media, params, _ := mime.ParseMediaType(msg.Header.Get("Content-Type")); strings.HasPrefix(media, "multipart") {
+		b := params["boundary"]
+		if b == "" {
+			return nil, errors.New("multipart message with no boundary specified")
+		}
+		var buf bytes.Buffer
+		mp := multipart.NewReader(msg.Body, b)
+		var partsList []string
+		for {
+			part, err := mp.NextPart()
+			if err == io.EOF {
+				if buf.Len() == 0 {
+					log.Println(msg.Header.Get("Subject"))
+					return nil, errors.New("no text/html or text/plain parts here: " + strings.Join(partsList, "; "))
+				}
+				break
+			}
+			if err != nil {
+				return nil, errors.New("error reading multipart message: " + err.Error())
+			}
+			media, params, _ = mime.ParseMediaType(part.Header.Get("Content-Type"))
+			if media == "text/html" || media == "text/plain" {
+				buf.Reset()
+				r, err := getReader(params["charset"], part)
+				if err != nil {
+					return nil, err
+				}
+				io.Copy(&buf, r)
+				if media == "text/html" {
+					break
+				}
+			}
+			partsList = append(partsList, media)
+		}
+		body = buf.Bytes()
+	} else {
+		body, err = ioutil.ReadAll(msg.Body)
+		if err != nil {
+			return nil, errors.New("error reading message body: " + err.Error())
+		}
+	}
+	return &ParsedMail{Header: msg.Header, Body: string(body)}, nil
+}
+
+func fetch(user, authToken string) ([]*ParsedMail, error) {
 	c, err := imap.DialTLS("imap.gmail.com:993", nil)
 	if err != nil {
 		return nil, err
@@ -113,56 +164,19 @@ func fetch(user, authToken string) ([]ParsedMail, error) {
 	if err != nil {
 		return nil, errors.New("fetch error: " + err.Error())
 	}
-	parsed := make([]ParsedMail, len(cmd.Data))
+	parsed := make([]*ParsedMail, len(cmd.Data))
 	for i, rsp := range cmd.Data {
-		msgBytes := imap.AsBytes(rsp.MessageInfo().Attrs["BODY[]"])
-		if msg, _ := mail.ReadMessage(bytes.NewReader(msgBytes)); msg != nil {
-			var body []byte
-			if media, params, _ := mime.ParseMediaType(msg.Header.Get("Content-Type")); strings.HasPrefix(media, "multipart") {
-				b := params["boundary"]
-				if b == "" {
-					return nil, errors.New("multipart message with no boundary specified")
-				}
-				var buf bytes.Buffer
-				mp := multipart.NewReader(msg.Body, b)
-				var partsList []string
-				for {
-					part, err := mp.NextPart()
-					if err == io.EOF {
-						if buf.Len() == 0 {
-							return nil, errors.New("no text/html or text/plain parts here: " + strings.Join(partsList, "; "))
-						}
-						break
-					}
-					if err != nil {
-						return nil, errors.New("error reading multipart message: " + err.Error())
-					}
-					media, params, _ = mime.ParseMediaType(part.Header.Get("Content-Type"))
-					if media == "text/html" || media == "text/plain" {
-						buf.Reset()
-						r, err := getReader(params["charset"], part)
-						if err != nil {
-							return nil, err
-						}
-						io.Copy(&buf, r)
-						if media == "text/html" {
-							break
-						}
-					}
-					partsList = append(partsList, media)
-				}
-				body = buf.Bytes()
-			} else {
-				body, err = ioutil.ReadAll(msg.Body)
-				if err != nil {
-					return nil, errors.New("error reading message body: " + err.Error())
-				}
-			}
-			thrid, _ := strconv.ParseUint(imap.AsString(rsp.MessageInfo().Attrs["X-GM-THRID"]), 10, 64)
-			parsed[i] = ParsedMail{Header: msg.Header, Body: string(body), Thrid: thrid}
-		} else {
-			return nil, errors.New("failed to parse message")
+		p, err := parseMail(imap.AsBytes(rsp.MessageInfo().Attrs["BODY[]"]))
+		if err != nil {
+			return nil, err
 		}
+		thridStr := imap.AsString(rsp.MessageInfo().Attrs["X-GM-THRID"])
+		thrid, err := strconv.ParseUint(thridStr, 10, 64)
+		if err != nil {
+			return nil, errors.New("bad value for X-GM-THRID: " + thridStr)
+		}
+		p.Thrid = thrid
+		parsed[i] = p
 	}
 	return parsed, nil
 }
