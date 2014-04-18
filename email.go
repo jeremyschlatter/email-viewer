@@ -3,15 +3,12 @@ package main
 import (
 	"bytes"
 	"errors"
-	"flag"
 	"fmt"
 	"io"
 	"io/ioutil"
-	"log"
 	"mime"
 	"mime/multipart"
 	"net/mail"
-	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -21,80 +18,64 @@ import (
 	"code.google.com/p/go.text/transform"
 )
 
-var user = flag.String("user", "", "your gmail address")
-var token = flag.String("token", "", "oauth access token. you can get one at https://developers.google.com/oauthplayground/")
-
-func main() {
-	imap.DefaultLogger = log.New(os.Stdout, "", 0)
-	imap.DefaultLogMask = imap.LogNone
-	flag.Parse()
-	if *user == "" || *token == "" {
-		flag.Usage()
-		return
-	}
-	mails, err := fetch(*user, *token)
-	if err != nil {
-		fmt.Println("Error in my fetch: ", err)
-	}
+func sortByThreads(mails []ParsedMail) [][]ParsedMail {
 	byThread := make(map[uint64][]ParsedMail)
 	for _, m := range mails {
 		byThread[m.Thrid] = append(byThread[m.Thrid], m)
 	}
-	for k, ms := range byThread {
-		fmt.Println("Thread", k)
-		for _, m := range ms {
-			fmt.Println("    ", m.Header.Get("Subject"))
-		}
+	result := make([][]ParsedMail, 0, len(byThread))
+	for _, thread := range byThread {
+		result = append(result, thread)
 	}
+	return result
+
 }
 
-// https://stackoverflow.com/questions/6002619/unmarshal-an-iso-8859-1-xml-input-in-go
-func isCharset(charset string, names []string) bool {
-	charset = strings.ToLower(charset)
-	for _, n := range names {
-		if charset == strings.ToLower(n) {
-			return true
-		}
-	}
-	return false
+// from http://encoding.spec.whatwg.org/#names-and-labels
+var knownCharsets = []*charset{
+	// utf-8
+	&charset{
+		names:   []string{"unicode-1-1-utf-8", "utf-8", "utf8", "" /*default*/},
+		decoder: transform.Nop,
+	},
+	// windows-1252
+	&charset{
+		names: []string{
+			"unicode-1-1-utf-8",
+			"ascii",
+			"cp1252",
+			"cp819",
+			"csisolatin1",
+			"ibm819",
+			"iso-8859-1",
+			"iso-ir-100",
+			"iso8859-1",
+			"iso88591",
+			"iso_8859-1",
+			"iso_8859-1:1987",
+			"l1",
+			"latin1",
+			"us-ascii",
+			"windows-1252",
+			"x-cp1252",
+		},
+		decoder: charmap.Windows1252.NewDecoder(),
+	},
 }
 
-func IsCharsetISO88591(charset string) bool {
-	// http://www.iana.org/assignments/character-sets
-	// (last updated 2010-11-04)
-	names := []string{
-		// Name
-		"ISO_8859-1:1987",
-		// Alias (preferred MIME name)
-		"ISO-8859-1",
-		// Aliases
-		"iso-ir-100",
-		"ISO_8859-1",
-		"latin1",
-		"l1",
-		"IBM819",
-		"CP819",
-		"csISOLatin1",
-	}
-	return isCharset(charset, names)
-}
-
-func IsCharsetUTF8(charset string) bool {
-	names := []string{
-		"UTF-8",
-	}
-	return isCharset(charset, names)
+type charset struct {
+	names   []string
+	decoder transform.Transformer
 }
 
 func getReader(charset string, r io.Reader) (io.Reader, error) {
-	switch {
-	case IsCharsetUTF8(charset):
-		return r, nil
-	case IsCharsetISO88591(charset):
-		// Windows-1252 is slightly different from ISO-8859-1, but only
-		// because it replaces C1 control codes with displayable characters.
-		// https://en.wikipedia.org/wiki/Windows-1252
-		return transform.NewReader(r, charmap.Windows1252.NewDecoder()), nil
+	charset = strings.ToLower(charset)
+	for _, m := range knownCharsets {
+		for _, name := range m.names {
+			if charset == name {
+				return transform.NewReader(r, m.decoder), nil
+			}
+		}
 	}
 	return nil, errors.New("Unexpected charset: " + charset)
 }
@@ -113,7 +94,7 @@ func (o oauthSASL) Next(challenge []byte) ([]byte, error) {
 
 type ParsedMail struct {
 	Header mail.Header
-	Body   []byte
+	Body   string
 	Thrid  uint64
 }
 
@@ -178,7 +159,7 @@ func fetch(user, authToken string) ([]ParsedMail, error) {
 				}
 			}
 			thrid, _ := strconv.ParseUint(imap.AsString(rsp.MessageInfo().Attrs["X-GM-THRID"]), 10, 64)
-			parsed[i] = ParsedMail{Header: msg.Header, Body: body, Thrid: thrid}
+			parsed[i] = ParsedMail{Header: msg.Header, Body: string(body), Thrid: thrid}
 		} else {
 			return nil, errors.New("failed to parse message")
 		}

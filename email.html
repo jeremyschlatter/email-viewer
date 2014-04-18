@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <link href="http://jeremyschlatter.com/css/bootstrap.min.css" rel="stylesheet">
+</head>
+<body>
+    <div class="container-fluid">
+        {{range .Messages}}
+        <div class="row">
+            <div class="col-md-4">
+                <span class="sender">{{.Header.Get "From"}}</span>
+                <span class="timestamp">{{.Header.Get "Date"}}</span>
+            </div>
+        </div>
+        <div class="row">
+                <div class="message">{{.Body}}</div>
+        </div>
+        {{else}}
+        <div class="row text-center" style="padding-top:40px">
+            <form action="" method="post">
+                <input name="user" placeholder="user@example.com"></input><br/>
+                <input name="token" placeholder="auth token"></input><br />
+                <button type="sumbit" class="btn btn-default">Check my mail</button>
+            </form>
+        </div>
+        {{end}}
+    </div>
+</body>
+</html>
