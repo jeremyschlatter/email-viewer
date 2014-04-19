@@ -20,6 +20,7 @@ import (
 
 func sortByThreads(mails []*ParsedMail) [][]*ParsedMail {
 	byThread := make([][]*ParsedMail, 0, len(mails))
+Outer:
 	for _, m := range mails {
 		for i := range byThread {
 			if byThread[i][0].Thrid == m.Thrid {
@@ -95,9 +96,10 @@ func (o oauthSASL) Next(challenge []byte) ([]byte, error) {
 }
 
 type ParsedMail struct {
-	Header mail.Header
-	Body   string
-	Thrid  uint64
+	Header    mail.Header
+	Body      string
+	Thrid     uint64
+	GmailLink string
 }
 
 func parseContent(r io.Reader, contentType string) ([]byte, bool) {
@@ -137,6 +139,14 @@ func parseMail(b []byte) (*ParsedMail, error) {
 	return &ParsedMail{Header: msg.Header, Body: string(body)}, nil
 }
 
+func gmailLink(s string) (string, error) {
+	u, err := strconv.ParseUint(s, 10, 64)
+	if err != nil {
+		return "", errors.New("bad value for X-GM-THRID: " + s)
+	}
+	return fmt.Sprintf("https://mail.google.com/mail/u/0/#inbox/%s", strconv.FormatUint(u, 16)), nil
+}
+
 func fetch(user, authToken string) ([]*ParsedMail, error) {
 	c, err := imap.DialTLS("imap.gmail.com:993", nil)
 	if err != nil {
@@ -148,7 +158,7 @@ func fetch(user, authToken string) ([]*ParsedMail, error) {
 	}
 	c.Select("INBOX", true)
 	set, _ := imap.NewSeqSet("1:*")
-	cmd, err := imap.Wait(c.Fetch(set, "BODY.PEEK[]", "X-GM-THRID"))
+	cmd, err := imap.Wait(c.Fetch(set, "BODY.PEEK[]", "X-GM-THRID", "X-GM-MSGID"))
 	if err != nil {
 		return nil, errors.New("fetch error: " + err.Error())
 	}
@@ -164,6 +174,11 @@ func fetch(user, authToken string) ([]*ParsedMail, error) {
 			return nil, errors.New("bad value for X-GM-THRID: " + thridStr)
 		}
 		p.Thrid = thrid
+		link, err := gmailLink(imap.AsString(rsp.MessageInfo().Attrs["X-GM-MSGID"]))
+		if err != nil {
+			return nil, err
+		}
+		p.GmailLink = link
 		parsed[i] = p
 	}
 	return parsed, nil

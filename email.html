@@ -13,6 +13,9 @@
                 <span class="sender">{{.Header.Get "From"}}</span>
                 <span class="timestamp">{{.Header.Get "Date"}}</span>
             </div>
+            <div class="col-md-8">
+                <a href="{{.GmailLink}}">View this message in gmail</a>
+            </div>
         </div>
         <div class="row">
                 <div class="message"><pre>{{.Body}}</pre></div>
