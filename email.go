@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"io/ioutil"
-	"log"
 	"mime"
 	"mime/multipart"
 	"net/mail"
@@ -20,15 +19,17 @@ import (
 )
 
 func sortByThreads(mails []*ParsedMail) [][]*ParsedMail {
-	byThread := make(map[uint64][]*ParsedMail)
+	byThread := make([][]*ParsedMail, 0, len(mails))
 	for _, m := range mails {
-		byThread[m.Thrid] = append(byThread[m.Thrid], m)
+		for i := range byThread {
+			if byThread[i][0].Thrid == m.Thrid {
+				byThread[i] = append(byThread[i], m)
+				continue Outer
+			}
+		}
+		byThread = append(byThread, []*ParsedMail{m})
 	}
-	result := make([][]*ParsedMail, 0, len(byThread))
-	for _, thread := range byThread {
-		result = append(result, thread)
-	}
-	return result
+	return byThread
 
 }
 
@@ -99,52 +100,39 @@ type ParsedMail struct {
 	Thrid  uint64
 }
 
+func parseContent(r io.Reader, contentType string) ([]byte, bool) {
+	media, params, _ := mime.ParseMediaType(contentType)
+	switch {
+	case media == "text/hmtl", media == "text/plain":
+		r, err := getReader(params["charset"], r)
+		if err != nil {
+			return nil, err == nil
+		}
+		body, err := ioutil.ReadAll(r)
+		return body, err == nil
+	case strings.HasPrefix(media, "multipart"):
+		mp := multipart.NewReader(r, params["boundary"])
+		for {
+			part, err := mp.NextPart()
+			if err != nil {
+				return nil, false
+			}
+			if body, ok := parseContent(part, part.Header.Get("Content-Type")); ok {
+				return body, true
+			}
+		}
+	}
+	return nil, false
+}
+
 func parseMail(b []byte) (*ParsedMail, error) {
 	msg, err := mail.ReadMessage(bytes.NewReader(b))
 	if err != nil {
 		return nil, errors.New("failed to parse message: " + err.Error())
 	}
-	var body []byte
-	if media, params, _ := mime.ParseMediaType(msg.Header.Get("Content-Type")); strings.HasPrefix(media, "multipart") {
-		b := params["boundary"]
-		if b == "" {
-			return nil, errors.New("multipart message with no boundary specified")
-		}
-		var buf bytes.Buffer
-		mp := multipart.NewReader(msg.Body, b)
-		var partsList []string
-		for {
-			part, err := mp.NextPart()
-			if err == io.EOF {
-				if buf.Len() == 0 {
-					log.Println(msg.Header.Get("Subject"))
-					return nil, errors.New("no text/html or text/plain parts here: " + strings.Join(partsList, "; "))
-				}
-				break
-			}
-			if err != nil {
-				return nil, errors.New("error reading multipart message: " + err.Error())
-			}
-			media, params, _ = mime.ParseMediaType(part.Header.Get("Content-Type"))
-			if media == "text/html" || media == "text/plain" {
-				buf.Reset()
-				r, err := getReader(params["charset"], part)
-				if err != nil {
-					return nil, err
-				}
-				io.Copy(&buf, r)
-				if media == "text/html" {
-					break
-				}
-			}
-			partsList = append(partsList, media)
-		}
-		body = buf.Bytes()
-	} else {
-		body, err = ioutil.ReadAll(msg.Body)
-		if err != nil {
-			return nil, errors.New("error reading message body: " + err.Error())
-		}
+	body, ok := parseContent(msg.Body, msg.Header.Get("Content-Type"))
+	if !ok {
+		return nil, fmt.Errorf("failed to find recognized content in this email: '%s'", msg.Header.Get("Subject"))
 	}
 	return &ParsedMail{Header: msg.Header, Body: string(body)}, nil
 }
