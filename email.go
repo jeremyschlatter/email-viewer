@@ -102,29 +102,39 @@ type ParsedMail struct {
 	GmailLink string
 }
 
-func parseContent(r io.Reader, contentType string) ([]byte, bool) {
+func parseContent(r io.Reader, contentType string) (body []byte, foundType string, err error) {
 	media, params, _ := mime.ParseMediaType(contentType)
+	fmt.Println("entering", media)
+	defer fmt.Printf("Leaving %s. Returning %d bytes of type %s, err=%v\n", media, len(body), foundType, err)
 	switch {
 	case media == "text/hmtl", media == "text/plain":
 		r, err := getReader(params["charset"], r)
 		if err != nil {
-			return nil, err == nil
+			return nil, "", err
 		}
 		body, err := ioutil.ReadAll(r)
-		return body, err == nil
+		return body, media, err
 	case strings.HasPrefix(media, "multipart"):
 		mp := multipart.NewReader(r, params["boundary"])
+		var tmp []byte
 		for {
 			part, err := mp.NextPart()
 			if err != nil {
-				return nil, false
+				return nil, "", err
 			}
-			if body, ok := parseContent(part, part.Header.Get("Content-Type")); ok {
-				return body, true
+			if tmp, foundType, err = parseContent(part, part.Header.Get("Content-Type")); err != nil {
+				body = tmp
+				if foundType == "text/html" {
+					break
+				} // else keep fishing for a text/html part
 			}
 		}
+		if body == nil {
+			foundType = ""
+		}
+		return body, foundType, nil
 	}
-	return nil, false
+	return nil, "", nil
 }
 
 func parseMail(b []byte) (*ParsedMail, error) {
@@ -132,8 +142,8 @@ func parseMail(b []byte) (*ParsedMail, error) {
 	if err != nil {
 		return nil, errors.New("failed to parse message: " + err.Error())
 	}
-	body, ok := parseContent(msg.Body, msg.Header.Get("Content-Type"))
-	if !ok {
+	body, _, err := parseContent(msg.Body, msg.Header.Get("Content-Type"))
+	if err != nil {
 		body = []byte("failed to parse content. view in gmail")
 	}
 	return &ParsedMail{Header: msg.Header, Body: string(body)}, nil
@@ -157,7 +167,7 @@ func fetch(user, authToken string) ([]*ParsedMail, error) {
 		return nil, err
 	}
 	c.Select("INBOX", true)
-	set, _ := imap.NewSeqSet("1:*")
+	set, _ := imap.NewSeqSet("1")
 	cmd, err := imap.Wait(c.Fetch(set, "BODY.PEEK[]", "X-GM-THRID", "X-GM-MSGID"))
 	if err != nil {
 		return nil, errors.New("fetch error: " + err.Error())
