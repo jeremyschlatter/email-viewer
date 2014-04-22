@@ -134,7 +134,7 @@ func parseMail(b []byte) (*ParsedMail, error) {
 	}
 	body, ok := parseContent(msg.Body, msg.Header.Get("Content-Type"))
 	if !ok {
-		return nil, fmt.Errorf("failed to find recognized content in this email: '%s'", msg.Header.Get("Subject"))
+		body = []byte("failed to parse content. view in gmail")
 	}
 	return &ParsedMail{Header: msg.Header, Body: string(body)}, nil
 }
