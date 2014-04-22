@@ -5,6 +5,7 @@ import (
 	"html/template"
 	"log"
 	"net/http"
+	"os"
 )
 
 var httpAddr = flag.String("http", ":8080", "port to listen to")
@@ -12,6 +13,7 @@ var httpAddr = flag.String("http", ":8080", "port to listen to")
 type Data struct {
 	EmailAddress string
 	Messages     []*ParsedMail
+	LoggedIn     bool
 }
 
 func homeHandler(w http.ResponseWriter, r *http.Request) {
@@ -23,6 +25,7 @@ func homeHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	var data Data
 	if u, t := r.FormValue("user"), r.FormValue("token"); u != "" && t != "" {
+		data.LoggedIn = true
 		data.EmailAddress = u
 		m, err := fetch(u, t)
 		if err != nil {
@@ -47,10 +50,29 @@ func Log(handler http.Handler) http.Handler {
 	})
 }
 
+type justFiles string
+
+func (s justFiles) Open(name string) (http.File, error) {
+	f, err := http.Dir(s).Open(name)
+	if err != nil {
+		return nil, err
+	}
+	return neuteredReaddirFile{f}, nil
+}
+
+type neuteredReaddirFile struct {
+	http.File
+}
+
+func (f neuteredReaddirFile) Readdir(count int) ([]os.FileInfo, error) {
+	return nil, nil
+}
+
 func main() {
 	flag.Parse()
 	template.Must(template.ParseFiles("email.html"))
 	http.HandleFunc("/", homeHandler)
+	http.Handle("/static/", http.StripPrefix("/static", http.FileServer(justFiles("static"))))
 	log.Println("listening at", *httpAddr)
 	log.Println(http.ListenAndServe(*httpAddr, Log(http.DefaultServeMux)))
 }
