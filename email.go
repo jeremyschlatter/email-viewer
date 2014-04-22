@@ -14,8 +14,7 @@ import (
 	"time"
 
 	"code.google.com/p/go-imap/go1/imap"
-	"code.google.com/p/go.text/encoding/charmap"
-	"code.google.com/p/go.text/transform"
+	"code.google.com/p/go.net/html/charset"
 )
 
 func sortByThreads(mails []*ParsedMail) [][]*ParsedMail {
@@ -32,55 +31,6 @@ Outer:
 	}
 	return byThread
 
-}
-
-// from http://encoding.spec.whatwg.org/#names-and-labels
-var knownCharsets = []*charset{
-	// utf-8
-	&charset{
-		names:   []string{"unicode-1-1-utf-8", "utf-8", "utf8", "" /*default*/},
-		decoder: transform.Nop,
-	},
-	// windows-1252
-	&charset{
-		names: []string{
-			"unicode-1-1-utf-8",
-			"ascii",
-			"cp1252",
-			"cp819",
-			"csisolatin1",
-			"ibm819",
-			"iso-8859-1",
-			"iso-ir-100",
-			"iso8859-1",
-			"iso88591",
-			"iso_8859-1",
-			"iso_8859-1:1987",
-			"l1",
-			"latin1",
-			"us-ascii",
-			"windows-1252",
-			"x-cp1252",
-		},
-		decoder: charmap.Windows1252.NewDecoder(),
-	},
-}
-
-type charset struct {
-	names   []string
-	decoder transform.Transformer
-}
-
-func getReader(charset string, r io.Reader) (io.Reader, error) {
-	charset = strings.ToLower(charset)
-	for _, m := range knownCharsets {
-		for _, name := range m.names {
-			if charset == name {
-				return transform.NewReader(r, m.decoder), nil
-			}
-		}
-	}
-	return nil, errors.New("Unexpected charset: " + charset)
 }
 
 type oauthSASL struct {
@@ -106,7 +56,7 @@ func parseContent(r io.Reader, contentType string) (body []byte, foundType strin
 	media, params, _ := mime.ParseMediaType(contentType)
 	switch {
 	case media == "text/html", media == "text/plain":
-		r, err = getReader(params["charset"], r)
+		r, err = charset.NewReader(r, params["charset"])
 		if err != nil {
 			return nil, "", err
 		}
