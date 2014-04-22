@@ -1,19 +1,55 @@
 package main
 
 import (
+	"encoding/json"
 	"flag"
 	"html/template"
 	"log"
 	"net/http"
 	"os"
+
+	"code.google.com/p/goauth2/oauth"
 )
 
 var httpAddr = flag.String("http", ":8080", "port to listen to")
+
+type credential struct {
+	ClientID     string
+	ClientSecret string
+}
+
+func init() {
+	file, err := os.Open("credentials.json")
+	if err != nil {
+		log.Fatalln(err)
+	}
+	var c credential
+	if err = json.NewDecoder(file).Decode(&c); err != nil {
+		log.Fatalln(err)
+	}
+	config.ClientId = c.ClientID
+	config.ClientSecret = c.ClientSecret
+}
+
+var config = &oauth.Config{
+	Scope:       "https://mail.google.com/ email",
+	AuthURL:     "https://accounts.google.com/o/oauth2/auth",
+	TokenURL:    "https://accounts.google.com/o/oauth2/token",
+	RedirectURL: "https://jeremyschlatter.com/quick-email",
+}
 
 type Data struct {
 	EmailAddress string
 	Messages     []*ParsedMail
 	LoggedIn     bool
+	AuthURL      string
+}
+
+type Person struct {
+	Emails []struct {
+		Value string `json:"value"`
+		Type  string `json:"type"`
+	} `json:"emails"`
 }
 
 func homeHandler(w http.ResponseWriter, r *http.Request) {
@@ -24,10 +60,30 @@ func homeHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var data Data
-	if u, t := r.FormValue("user"), r.FormValue("token"); u != "" && t != "" {
+	data.AuthURL = config.AuthCodeURL("")
+	if code := r.FormValue("code"); code != "" {
+		t := &oauth.Transport{Config: config}
+		t.Exchange(code)
+		c := t.Client()
+		resp, err := c.Get("https://www.googleapis.com/plus/v1/people/me")
+		if err != nil {
+			log.Println(err)
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		defer resp.Body.Close()
+		var p Person
+		json.NewDecoder(resp.Body).Decode(&p)
+		var user string
+		for _, email := range p.Emails {
+			if email.Type == "account" {
+				user = email.Value
+				break
+			}
+		}
 		data.LoggedIn = true
-		data.EmailAddress = u
-		m, err := fetch(u, t)
+		data.EmailAddress = user
+		m, err := fetch(user, t.Token.AccessToken)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
