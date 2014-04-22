@@ -104,15 +104,13 @@ type ParsedMail struct {
 
 func parseContent(r io.Reader, contentType string) (body []byte, foundType string, err error) {
 	media, params, _ := mime.ParseMediaType(contentType)
-	fmt.Println("entering", media)
-	defer fmt.Printf("Leaving %s. Returning %d bytes of type %s, err=%v\n", media, len(body), foundType, err)
 	switch {
-	case media == "text/hmtl", media == "text/plain":
-		r, err := getReader(params["charset"], r)
+	case media == "text/html", media == "text/plain":
+		r, err = getReader(params["charset"], r)
 		if err != nil {
 			return nil, "", err
 		}
-		body, err := ioutil.ReadAll(r)
+		body, err = ioutil.ReadAll(r)
 		return body, media, err
 	case strings.HasPrefix(media, "multipart"):
 		mp := multipart.NewReader(r, params["boundary"])
@@ -122,7 +120,7 @@ func parseContent(r io.Reader, contentType string) (body []byte, foundType strin
 			if err != nil {
 				return nil, "", err
 			}
-			if tmp, foundType, err = parseContent(part, part.Header.Get("Content-Type")); err != nil {
+			if tmp, foundType, err = parseContent(part, part.Header.Get("Content-Type")); err == nil {
 				body = tmp
 				if foundType == "text/html" {
 					break
