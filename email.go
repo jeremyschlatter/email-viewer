@@ -55,7 +55,7 @@ type ParsedMail struct {
 }
 
 func sanitizeHTML(r io.Reader) ([]byte, error) {
-	cmd := exec.Command("php", "sanitize.php")
+	cmd := exec.Command("js", "sanitize.js")
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		return nil, err
