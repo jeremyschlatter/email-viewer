@@ -53,11 +53,12 @@ func init() {
 }
 
 var config = &oauth.Config{
-	Scope:       "https://mail.google.com/ email",
-	AuthURL:     "https://accounts.google.com/o/oauth2/auth",
-	TokenURL:    "https://accounts.google.com/o/oauth2/token",
-	RedirectURL: "https://jeremyschlatter.com/quick-email",
-	AccessType:  "offline",
+	Scope:          "https://mail.google.com/ email",
+	AuthURL:        "https://accounts.google.com/o/oauth2/auth",
+	TokenURL:       "https://accounts.google.com/o/oauth2/token",
+	RedirectURL:    "https://jeremyschlatter.com/quick-email",
+	AccessType:     "offline",
+	ApprovalPrompt: "force",
 }
 
 type Data struct {
@@ -108,7 +109,7 @@ func homeHandler(w http.ResponseWriter, r *http.Request) {
 	data := Data{AuthURL: config.AuthCodeURL("")}
 	var token *oauth.Token
 	var user string
-	if c, err := r.Cookie("user-1"); err == nil {
+	if c, err := r.Cookie("user"); err == nil {
 		token = new(oauth.Token)
 		user = c.Value
 		if err = getToken(c.Value, token); err != nil {
@@ -117,7 +118,10 @@ func homeHandler(w http.ResponseWriter, r *http.Request) {
 		}
 		if token.Expired() {
 			t := &oauth.Transport{Config: config, Token: token}
-			t.Refresh()
+			if err = t.Refresh(); err != nil {
+				leakyLog(w, err)
+				return
+			}
 		}
 	} else if code := r.FormValue("code"); code != "" {
 		t := &oauth.Transport{Config: config}
@@ -136,7 +140,7 @@ func homeHandler(w http.ResponseWriter, r *http.Request) {
 		}
 		saveToken(user, t.Token)
 		token = t.Token
-		http.SetCookie(w, &http.Cookie{Name: "user-1", Value: user, Secure: true})
+		http.SetCookie(w, &http.Cookie{Name: "user", Value: user, Secure: true})
 	}
 	if token != nil {
 		data.LoggedIn = true
