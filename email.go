@@ -4,11 +4,13 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"html/template"
 	"io"
 	"io/ioutil"
 	"mime"
 	"mime/multipart"
 	"net/mail"
+	"os/exec"
 	"strconv"
 	"strings"
 	"time"
@@ -47,20 +49,53 @@ func (o oauthSASL) Next(challenge []byte) ([]byte, error) {
 
 type ParsedMail struct {
 	Header    mail.Header
-	Body      string
+	Body      template.HTML
 	Thrid     uint64
 	GmailLink string
 }
 
+func sanitizeHTML(r io.Reader) ([]byte, error) {
+	cmd := exec.Command("php", "sanitize.php")
+	stdin, err := cmd.StdinPipe()
+	if err != nil {
+		return nil, err
+	}
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return nil, err
+	}
+	if err = cmd.Start(); err != nil {
+		return nil, err
+	}
+	if _, err = io.Copy(stdin, r); err != nil {
+		return nil, err
+	}
+	if err = stdin.Close(); err != nil {
+		return nil, err
+	}
+	san, err := ioutil.ReadAll(stdout)
+	if err != nil {
+		return nil, err
+	}
+	return san, cmd.Wait()
+}
+
+var textHTML = "text/html"
+var textPlain = "text/plain"
+
 func parseContent(r io.Reader, contentType string) (body []byte, foundType string, err error) {
 	media, params, _ := mime.ParseMediaType(contentType)
 	switch {
-	case media == "text/html", media == "text/plain":
+	case media == textHTML, media == textPlain:
 		r, err = charset.NewReader(r, params["charset"])
 		if err != nil {
 			return nil, "", err
 		}
-		body, err = ioutil.ReadAll(r)
+		if media == textHTML {
+			body, err = sanitizeHTML(r)
+		} else {
+			body, err = ioutil.ReadAll(r)
+		}
 		return body, media, err
 	case strings.HasPrefix(media, "multipart"):
 		mp := multipart.NewReader(r, params["boundary"])
@@ -72,7 +107,7 @@ func parseContent(r io.Reader, contentType string) (body []byte, foundType strin
 			}
 			if tmp, foundType, err = parseContent(part, part.Header.Get("Content-Type")); err == nil {
 				body = tmp
-				if foundType == "text/html" {
+				if foundType == textHTML {
 					break
 				} // else keep fishing for a text/html part
 			}
@@ -90,11 +125,17 @@ func parseMail(b []byte) (*ParsedMail, error) {
 	if err != nil {
 		return nil, errors.New("failed to parse message: " + err.Error())
 	}
-	body, _, err := parseContent(msg.Body, msg.Header.Get("Content-Type"))
+	body, foundType, err := parseContent(msg.Body, msg.Header.Get("Content-Type"))
 	if err != nil {
 		body = []byte("failed to parse content. view in gmail")
 	}
-	return &ParsedMail{Header: msg.Header, Body: string(body)}, nil
+	parsed := &ParsedMail{Header: msg.Header}
+	if foundType == textHTML {
+		parsed.Body = template.HTML(body) // parseContent sanitizes text/html
+	} else {
+		parsed.Body = template.HTML(template.HTMLEscapeString(string(body)))
+	}
+	return parsed, nil
 }
 
 func gmailLink(s string) (string, error) {
