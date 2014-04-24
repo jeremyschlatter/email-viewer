@@ -7,6 +7,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"time"
 
 	"code.google.com/p/goauth2/oauth"
 	"code.google.com/p/google-api-go-client/plus/v1"
@@ -66,6 +67,7 @@ type Data struct {
 	Messages     []*ParsedMail
 	LoggedIn     bool
 	AuthURL      string
+	Threads      []Thread
 }
 
 type Person struct {
@@ -145,13 +147,27 @@ func homeHandler(w http.ResponseWriter, r *http.Request) {
 	if token != nil {
 		data.LoggedIn = true
 		data.EmailAddress = user
-		m, err := fetch(user, token.AccessToken)
+		c, err := connect(user, token.AccessToken)
+		// TODO: Errors here are almost certainly either oauth failures which are my fault
+		//       or temporary network problems connecting to gmail. Users should not see this.
+		if err != nil {
+			http.Error(w, "Error connecting to gmail", http.StatusServiceUnavailable)
+			return
+		}
+		c.Select("INBOX", true)
+		defer c.Logout(15 * time.Second)
+		threads, err := getThreads(c)
+		if err != nil {
+			http.Error(w, "Error connecting to gmail", http.StatusServiceUnavailable)
+			return
+		}
+		m, err := fetch(c, threads[0])
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-		threads := sortByThreads(m)
-		data.Messages = threads[0]
+		data.Messages = m
+		data.Threads = threads
 	}
 	homeTemplate.Execute(w, data)
 }

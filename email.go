@@ -7,32 +7,24 @@ import (
 	"html/template"
 	"io"
 	"io/ioutil"
+	"log"
 	"mime"
 	"mime/multipart"
 	"net/mail"
+	"os"
 	"os/exec"
 	"strconv"
 	"strings"
 	"time"
 
-	"code.google.com/p/go-imap/go1/imap"
 	"code.google.com/p/go.net/html/charset"
+	"github.com/mxk/go-imap/imap"
 )
 
-func sortByThreads(mails []*ParsedMail) [][]*ParsedMail {
-	byThread := make([][]*ParsedMail, 0, len(mails))
-Outer:
-	for _, m := range mails {
-		for i := range byThread {
-			if byThread[i][0].Thrid == m.Thrid {
-				byThread[i] = append(byThread[i], m)
-				continue Outer
-			}
-		}
-		byThread = append(byThread, []*ParsedMail{m})
-	}
-	return byThread
-
+func init() {
+	imap.DefaultLogger = log.New(os.Stdout, "", 0)
+	imap.DefaultLogMask = imap.LogNone
+	//imap.DefaultLogMask = imap.LogConn | imap.LogRaw
 }
 
 type oauthSASL struct {
@@ -50,7 +42,6 @@ func (o oauthSASL) Next(challenge []byte) ([]byte, error) {
 type ParsedMail struct {
 	Header    mail.Header
 	Body      template.HTML
-	Thrid     uint64
 	GmailLink string
 }
 
@@ -141,25 +132,58 @@ func parseMail(b []byte) (*ParsedMail, error) {
 func gmailLink(s string) (string, error) {
 	u, err := strconv.ParseUint(s, 10, 64)
 	if err != nil {
-		return "", errors.New("bad value for X-GM-THRID: " + s)
+		return "", errors.New("bad value for X-GM-MSGID: " + s)
 	}
 	return fmt.Sprintf("https://mail.google.com/mail/u/0/#inbox/%s", strconv.FormatUint(u, 16)), nil
 }
 
-func fetch(user, authToken string) ([]*ParsedMail, error) {
+type Thread []uint32
+
+func connect(user, authToken string) (*imap.Client, error) {
 	c, err := imap.DialTLS("imap.gmail.com:993", nil)
 	if err != nil {
 		return nil, err
 	}
-	defer c.Logout(15 * time.Second)
 	if _, err = c.Auth(oauthSASL{user, authToken}); err != nil {
+		c.Logout(2 * time.Second)
 		return nil, err
 	}
-	c.Select("INBOX", true)
-	set, _ := imap.NewSeqSet("1")
-	cmd, err := imap.Wait(c.Fetch(set, "BODY.PEEK[]", "X-GM-THRID", "X-GM-MSGID"))
+	return c, nil
+}
+
+// Error while communicating with gmail.
+var ErrBadConnection = errors.New("Encountered error while communicating with gmail")
+
+func getThreads(c *imap.Client) ([]Thread, error) {
+	set, err := imap.NewSeqSet("1:*")
+	cmd, err := imap.Wait(c.Fetch(set, "X-GM-THRID", "UID"))
 	if err != nil {
-		return nil, errors.New("fetch error: " + err.Error())
+		fmt.Println(err)
+		return nil, ErrBadConnection
+	}
+	var result []Thread
+	seen := make(map[string]int)
+	for _, rsp := range cmd.Data {
+		thrid := imap.AsString(rsp.MessageInfo().Attrs["X-GM-THRID"])
+		uid := imap.AsNumber(rsp.MessageInfo().Attrs["UID"])
+		if i, ok := seen[thrid]; ok {
+			result[i] = append(result[i], uid)
+		} else {
+			result = append(result, Thread{uid})
+			seen[thrid] = len(result) - 1
+		}
+	}
+	return result, nil
+}
+
+func fetch(c *imap.Client, thread Thread) ([]*ParsedMail, error) {
+	var set imap.SeqSet
+	for _, uid := range thread {
+		set.AddNum(uid)
+	}
+	cmd, err := imap.Wait(c.UIDFetch(&set, "BODY[]", "X-GM-MSGID"))
+	if err != nil {
+		return nil, ErrBadConnection
 	}
 	parsed := make([]*ParsedMail, len(cmd.Data))
 	for i, rsp := range cmd.Data {
@@ -167,12 +191,6 @@ func fetch(user, authToken string) ([]*ParsedMail, error) {
 		if err != nil {
 			return nil, err
 		}
-		thridStr := imap.AsString(rsp.MessageInfo().Attrs["X-GM-THRID"])
-		thrid, err := strconv.ParseUint(thridStr, 10, 64)
-		if err != nil {
-			return nil, errors.New("bad value for X-GM-THRID: " + thridStr)
-		}
-		p.Thrid = thrid
 		link, err := gmailLink(imap.AsString(rsp.MessageInfo().Attrs["X-GM-MSGID"]))
 		if err != nil {
 			return nil, err
