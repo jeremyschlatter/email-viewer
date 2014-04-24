@@ -176,6 +176,43 @@ func getThreads(c *imap.Client) ([]Thread, error) {
 	return result, nil
 }
 
+func archive(c *imap.Client, thread Thread) error {
+	// The archive operation is removing the \Inbox label.
+	// But when viewed in INBOX, the messages don't have that label.
+	// We have to switch to [Gmail]/All Mail.
+	if len(thread) == 0 { // Save some round trips.
+		return nil
+	}
+	var set imap.SeqSet
+	for _, uid := range thread {
+		set.AddNum(uid)
+	}
+	cmd, err := imap.Wait(c.UIDFetch(&set, "X-GM-MSGID"))
+	if err != nil {
+		return err
+	}
+	msgids := make([]string, len(cmd.Data))
+	for i, rsp := range cmd.Data {
+		msgids[i] = "X-GM-MSGID " + imap.AsString(rsp.MessageInfo().Attrs["X-GM-MSGID"])
+	}
+	prev := c.Mailbox.Name
+	c.Select("[Gmail]/All Mail", false)
+	defer c.Select(prev, true)
+	cmd, err = imap.Wait(c.UIDSearch(strings.Repeat("OR ", len(msgids)-1) + strings.Join(msgids, " ")))
+	if err != nil {
+		log.Println(err)
+		return ErrBadConnection
+	}
+	if len(cmd.Data) == 0 {
+		log.Println("no responses from completed seach")
+		return ErrBadConnection
+	}
+	set.Clear()
+	set.AddNum(cmd.Data[0].SearchResults()...)
+	_, err = imap.Wait(c.UIDStore(&set, "-X-GM-LABELS", `\Inbox`))
+	return err
+}
+
 func fetch(c *imap.Client, thread Thread) ([]*ParsedMail, error) {
 	var set imap.SeqSet
 	for _, uid := range thread {
