@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"flag"
 	"html/template"
@@ -11,46 +12,43 @@ import (
 
 	"code.google.com/p/goauth2/oauth"
 	"code.google.com/p/google-api-go-client/plus/v1"
-	"github.com/boltdb/bolt"
+	"github.com/gorilla/securecookie"
 )
 
 var httpAddr = flag.String("http", ":8080", "port to listen to")
 
 var tokenBucket = []byte("tokens")
 
-type credential struct {
-	ClientID     string
-	ClientSecret string
+type serverConfig struct {
+	ClientID       string
+	ClientSecret   string
+	CookieHashKey  string
+	CookieBlockKey string
 }
 
-var db *bolt.DB
+var s *securecookie.SecureCookie
 
-func initDB() {
-	var err error
-	db, err = bolt.Open("emails.db", 0600)
+func checkInitError(err error) {
 	if err != nil {
-		log.Fatalln(err)
-	}
-	err = db.Update(func(tx *bolt.Tx) error {
-		_, err := tx.CreateBucket(tokenBucket)
-		return err
-	})
-	if err != nil && err != bolt.ErrBucketExists {
-		log.Fatalln(err)
+		log.Fatal(err)
 	}
 }
 
 func init() {
-	file, err := os.Open("credentials.json")
-	if err != nil {
-		log.Fatalln(err)
-	}
-	var c credential
-	if err = json.NewDecoder(file).Decode(&c); err != nil {
-		log.Fatalln(err)
-	}
+	file, err := os.Open("server-config.json")
+	checkInitError(err)
+	var c serverConfig
+	checkInitError(json.NewDecoder(file).Decode(&c))
 	config.ClientId = c.ClientID
 	config.ClientSecret = c.ClientSecret
+	hashKey, err := base64.StdEncoding.DecodeString(c.CookieHashKey)
+	checkInitError(err)
+	blockKey, err := base64.StdEncoding.DecodeString(c.CookieBlockKey)
+	checkInitError(err)
+	if len(hashKey) != 64 || len(blockKey) != 32 {
+		log.Fatal("bad key lengths")
+	}
+	s = securecookie.New(hashKey, blockKey)
 }
 
 var config = &oauth.Config{
@@ -77,28 +75,47 @@ type Person struct {
 	} `json:"emails"`
 }
 
-func getToken(user string, t *oauth.Token) error {
-	var tokenBytes []byte
-	db.View(func(tx *bolt.Tx) error {
-		tokenBytes = tx.Bucket(tokenBucket).Get([]byte(user))
-		return nil
-	})
-	return json.Unmarshal(tokenBytes, t)
-}
-
-func saveToken(user string, t *oauth.Token) error {
-	tokenBytes, err := json.Marshal(t)
-	if err != nil {
-		return err
-	}
-	return db.Update(func(tx *bolt.Tx) error {
-		return tx.Bucket(tokenBucket).Put([]byte(user), tokenBytes)
-	})
-}
-
 func leakyLog(w http.ResponseWriter, err error) {
 	log.Println(err)
 	http.Error(w, err.Error(), http.StatusInternalServerError)
+}
+
+func SetSecureCookie(w http.ResponseWriter, name string, value interface{}) error {
+	encoded, err := s.Encode(name, value)
+	if err == nil {
+		http.SetCookie(w, &http.Cookie{
+			Name:     name,
+			Value:    encoded,
+			HttpOnly: true,
+			Secure:   true})
+	}
+	return err
+}
+
+func ReadSecureCookie(r *http.Request, name string, value interface{}) error {
+	cookie, err := r.Cookie(name)
+	if err != nil {
+		return err
+	}
+	return s.Decode(name, cookie.Value, value)
+}
+
+func getSavedCreds(w http.ResponseWriter, r *http.Request) (user string, token *oauth.Token, ok bool) {
+	if ReadSecureCookie(r, "user", &user) != nil {
+		return "", nil, false
+	}
+	token = new(oauth.Token)
+	if ReadSecureCookie(r, "token", token) != nil {
+		return "", nil, false
+	}
+	if token.Expired() {
+		t := &oauth.Transport{Config: config, Token: token}
+		if t.Refresh() != nil {
+			return "", nil, false
+		}
+		SetSecureCookie(w, "token", token)
+	}
+	return user, token, true
 }
 
 func homeHandler(w http.ResponseWriter, r *http.Request) {
@@ -109,25 +126,10 @@ func homeHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	data := Data{AuthURL: config.AuthCodeURL("")}
-	var token *oauth.Token
-	var user string
-	if c, err := r.Cookie("user"); err == nil {
-		token = new(oauth.Token)
-		user = c.Value
-		if err = getToken(c.Value, token); err != nil {
-			leakyLog(w, err)
-			return
-		}
-		if token.Expired() {
-			t := &oauth.Transport{Config: config, Token: token}
-			if err = t.Refresh(); err != nil {
-				leakyLog(w, err)
-				return
-			}
-		}
-	} else if code := r.FormValue("code"); code != "" {
+	user, token, ok := getSavedCreds(w, r)
+	if !ok && r.FormValue("code") != "" {
 		t := &oauth.Transport{Config: config}
-		t.Exchange(code)
+		t.Exchange(r.FormValue("code"))
 		plusService, _ := plus.New(t.Client())
 		person, err := plusService.People.Get("me").Do()
 		if err != nil {
@@ -140,11 +142,12 @@ func homeHandler(w http.ResponseWriter, r *http.Request) {
 				break
 			}
 		}
-		saveToken(user, t.Token)
 		token = t.Token
-		http.SetCookie(w, &http.Cookie{Name: "user", Value: user, Secure: true})
+		SetSecureCookie(w, "user", user)
+		SetSecureCookie(w, "token", token)
+		ok = true
 	}
-	if token != nil {
+	if ok {
 		data.LoggedIn = true
 		data.EmailAddress = user
 		c, err := connect(user, token.AccessToken)
@@ -198,8 +201,6 @@ func (f neuteredReaddirFile) Readdir(count int) ([]os.FileInfo, error) {
 
 func main() {
 	flag.Parse()
-	initDB()
-	defer db.Close()
 	template.Must(template.ParseFiles("email.html"))
 	http.HandleFunc("/", homeHandler)
 	http.Handle("/static/", http.StripPrefix("/static", http.FileServer(justFiles("static"))))
