@@ -48,7 +48,7 @@ func EqualThreads(t1, t2 []Thread) bool {
 	return true
 }
 
-func TestFetchThreads(T *testing.T) {
+func TestGetThreads(T *testing.T) {
 	cases := []struct {
 		msgs    []interface{}
 		threads []Thread
