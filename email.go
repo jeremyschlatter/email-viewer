@@ -2,12 +2,15 @@ package main
 
 import (
 	"bytes"
+	"crypto/rand"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"html/template"
 	"io"
 	"io/ioutil"
 	"log"
+	unsafeRand "math/rand"
 	"mime"
 	"mime/multipart"
 	"net/mail"
@@ -15,6 +18,7 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"code.google.com/p/go.net/html/charset"
@@ -42,6 +46,7 @@ func (o oauthSASL) Next(challenge []byte) ([]byte, error) {
 type ParsedMail struct {
 	Header    mail.Header
 	Body      template.HTML
+	BodyLink  string
 	GmailLink string
 }
 
@@ -82,11 +87,7 @@ func parseContent(r io.Reader, contentType string) (body []byte, foundType strin
 		if err != nil {
 			return nil, "", err
 		}
-		if media == textHTML {
-			body, err = sanitizeHTML(r)
-		} else {
-			body, err = ioutil.ReadAll(r)
-		}
+		body, err = ioutil.ReadAll(r)
 		return body, media, err
 	case strings.HasPrefix(media, "multipart"):
 		mp := multipart.NewReader(r, params["boundary"])
@@ -122,11 +123,46 @@ func parseMail(b []byte) (*ParsedMail, error) {
 	}
 	parsed := &ParsedMail{Header: msg.Header}
 	if foundType == textHTML {
-		parsed.Body = template.HTML(body) // parseContent sanitizes text/html
+		parsed.Body = template.HTML(template.HTMLEscapeString(string(body)))
 	} else {
 		parsed.Body = template.HTML(template.HTMLEscapeString(string(body)))
 	}
+	key := genKey()
+	saveFragment(key, string(body))
+	parsed.BodyLink = "fragment?key=" + key
 	return parsed, nil
+}
+
+func genKey() string {
+	b := make([]byte, 64)
+	if _, err := rand.Read(b); err != nil {
+		for i := range b {
+			b[i] = byte(unsafeRand.Uint32())
+		}
+	}
+	return base64.URLEncoding.EncodeToString(b)
+}
+
+var (
+	fragments map[string]string
+	mu        sync.Mutex
+)
+
+func saveFragment(key, value string) {
+	if fragments == nil {
+		fragments = make(map[string]string)
+	}
+	mu.Lock()
+	fragments[key] = value
+	mu.Unlock()
+}
+
+func getFragment(key string) string {
+	mu.Lock()
+	value := fragments[key]
+	delete(fragments, key)
+	mu.Unlock()
+	return value
 }
 
 func gmailLink(s string) (string, error) {

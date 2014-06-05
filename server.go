@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"flag"
 	"html/template"
+	"io"
 	"log"
 	"net/http"
 	"os"
@@ -172,7 +173,9 @@ func homeHandler(w http.ResponseWriter, r *http.Request) {
 		data.Messages = m
 		data.Threads = threads
 	}
-	homeTemplate.Execute(w, data)
+	if err = homeTemplate.Execute(w, data); err != nil {
+		log.Println(err)
+	}
 }
 func Log(handler http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -199,11 +202,17 @@ func (f neuteredReaddirFile) Readdir(count int) ([]os.FileInfo, error) {
 	return nil, nil
 }
 
+func fragmentHandler(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	io.WriteString(w, getFragment(r.FormValue("key")))
+}
+
 func main() {
 	flag.Parse()
 	template.Must(template.ParseFiles("email.html"))
 	http.HandleFunc("/", homeHandler)
 	http.Handle("/static/", http.StripPrefix("/static", http.FileServer(justFiles("static"))))
+	http.HandleFunc("/fragment", fragmentHandler)
 	log.Println("listening at", *httpAddr)
 	log.Println(http.ListenAndServe(*httpAddr, Log(http.DefaultServeMux)))
 }

@@ -2,6 +2,7 @@
 <html lang="en">
 <head>
     <meta charset="utf-8">
+    <script src="//caja.appspot.com/caja.js"></script>
     <link href="static/css/email.css" rel="stylesheet">
 </head>
 <body>
@@ -17,7 +18,8 @@
             </div>
         </div>
         <div class="row">
-                <div class="embedded"><div>{{.Body}}</div></div>
+            <div id="guest"></div>
+        <!--        <div class="embedded"><div>{{.Body}}</div></div>-->
         </div>
         {{else}}
         <div class="row text-center" style="padding-top:40px">
@@ -25,5 +27,15 @@
         </div>
         {{end}}
     </div>
+    <script>
+        caja.initialize({
+            cajaServer: 'https://caja.appspot.com/',
+            debug: true
+        });
+        caja.load(document.getElementById('guest'), undefined, function(frame) {
+            frame.code('{{with index .Messages 0}}{{.BodyLink}}{{end}}', 'text/html')
+                 .run();
+        });
+    </script>
 </body>
 </html>
