@@ -14,6 +14,7 @@ import (
 	"mime"
 	"mime/multipart"
 	"net/mail"
+	"net/smtp"
 	"os"
 	"os/exec"
 	"strconv"
@@ -43,11 +44,30 @@ func (o oauthSASL) Next(challenge []byte) ([]byte, error) {
 	return nil, errors.New("Challenge shouldn't be issued.")
 }
 
+// The smtp.Auth and imap.SASL interfaces are very slightly different, so we need two very slightly different types.
+type smtpAuth struct {
+	user, token string
+}
+
+func (o smtpAuth) Start(s *smtp.ServerInfo) (string, []byte, error) {
+	return "XOAUTH2", []byte(fmt.Sprintf("user=%s\x01auth=Bearer %s\x01\x01", o.user, o.token)), nil
+}
+
+func (o smtpAuth) Next(fromServer []byte, more bool) ([]byte, error) {
+	if more {
+		fmt.Println(string(fromServer))
+		return nil, errors.New("Unexpected server message.")
+	}
+	return nil, nil
+}
+
 type ParsedMail struct {
-	Header    mail.Header
-	Body      template.HTML
-	BodyLink  string
-	GmailLink string
+	Header          mail.Header
+	Body            template.HTML
+	BodyLink        string
+	GmailLink       string
+	Recipients      []string
+	NamedRecipients []string
 }
 
 func sanitizeHTML(r io.Reader) ([]byte, error) {
@@ -130,6 +150,21 @@ func parseMail(b []byte) (*ParsedMail, error) {
 	key := genKey()
 	saveFragment(key, string(body))
 	parsed.BodyLink = "fragment?key=" + key
+	seen := make(map[string]bool)
+	for _, f := range []string{"To", "From", "Cc"} {
+		lst, err := msg.Header.AddressList(f)
+		if err != nil {
+			continue
+		}
+		for _, a := range lst {
+			fmt.Printf("%#v\n", a)
+			if !seen[a.Address] {
+				seen[a.Address] = true
+				parsed.Recipients = append(parsed.Recipients, a.Address)
+				parsed.NamedRecipients = append(parsed.NamedRecipients, a.String())
+			}
+		}
+	}
 	return parsed, nil
 }
 

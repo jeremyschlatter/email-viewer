@@ -3,12 +3,15 @@ package main
 import (
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"flag"
 	"html/template"
 	"io"
 	"log"
 	"net/http"
+	"net/smtp"
 	"os"
+	"strings"
 	"time"
 
 	"code.google.com/p/goauth2/oauth"
@@ -207,12 +210,33 @@ func fragmentHandler(w http.ResponseWriter, r *http.Request) {
 	io.WriteString(w, getFragment(r.FormValue("key")))
 }
 
+func sendHandler(w http.ResponseWriter, r *http.Request) {
+	user, token, ok := getSavedCreds(w, r)
+	if !ok {
+		leakyLog(w, errors.New("not logged in"))
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		leakyLog(w, errors.New("malformed request"))
+		return
+	}
+	to := "To: " + strings.Join(r.Form["named-recipients"], ",\n") + "\n"
+	msg := []byte(to + "Subject: " + r.FormValue("subject") + "\n\n" + r.FormValue("mail-text"))
+	err := smtp.SendMail("smtp.gmail.com:587", smtpAuth{user, token.AccessToken}, user, r.Form["recipients"], msg)
+	if err != nil {
+		leakyLog(w, err)
+		return
+	}
+	http.Redirect(w, r, "/quick-email", http.StatusFound)
+}
+
 func main() {
 	flag.Parse()
 	template.Must(template.ParseFiles("email.html"))
 	http.HandleFunc("/", homeHandler)
 	http.Handle("/static/", http.StripPrefix("/static", http.FileServer(justFiles("static"))))
 	http.HandleFunc("/fragment", fragmentHandler)
+	http.HandleFunc("/send", sendHandler)
 	log.Println("listening at", *httpAddr)
 	log.Println(http.ListenAndServe(*httpAddr, Log(http.DefaultServeMux)))
 }

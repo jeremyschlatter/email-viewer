@@ -26,6 +26,25 @@
             <a href="{{.AuthURL}}" class="btn btn-default">Check my mail</a>
         </div>
         {{end}}
+        {{if .Messages}}
+        <form action="send" method="post">
+        <div class="row">
+            <textarea name="mail-text" style="width:90%; margin:auto; height:60px;"></textarea>
+        </div>
+        <div class="row">
+            <button type="sumbit" class="btn btn-default btn-lg">Send</button>
+        </div>
+        {{with index .Messages 0}}
+        {{range .Recipients}}
+        <input type="hidden" name="recipients" value="{{.}}"></input>
+        {{end}}
+        {{range .NamedRecipients}}
+        <input type="hidden" name="named-recipients" value="{{.}}"></input>
+        {{end}}
+        <input type="hidden" name="subject" value="{{.Header.Get "Subject"}}"></input>
+        </form>
+        {{end}}
+        {{end}}
     </div>
     <script>
         caja.initialize({
