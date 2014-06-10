@@ -180,6 +180,7 @@ func homeHandler(w http.ResponseWriter, r *http.Request) {
 		log.Println(err)
 	}
 }
+
 func Log(handler http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		log.Printf("%s %s %s\n", r.RemoteAddr, r.Method, r.URL)

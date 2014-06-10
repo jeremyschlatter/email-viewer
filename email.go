@@ -63,7 +63,6 @@ func (o smtpAuth) Next(fromServer []byte, more bool) ([]byte, error) {
 
 type ParsedMail struct {
 	Header          mail.Header
-	Body            template.HTML
 	BodyLink        string
 	GmailLink       string
 	Recipients      []string
@@ -143,10 +142,8 @@ func parseMail(b []byte) (*ParsedMail, error) {
 		body = []byte("failed to parse content. view in gmail")
 	}
 	parsed := &ParsedMail{Header: msg.Header}
-	if foundType == textHTML {
-		parsed.Body = template.HTML(template.HTMLEscapeString(string(body)))
-	} else {
-		parsed.Body = template.HTML(template.HTMLEscapeString(string(body)))
+	if foundType == textPlain {
+		body = []byte("<pre style=\"word-wrap: break-word; white-space: pre-wrap;\">" + template.HTMLEscapeString(string(body)) + "</pre>")
 	}
 	key := genKey()
 	saveFragment(key, string(body))
