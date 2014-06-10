@@ -27,14 +27,20 @@
         </div>
         {{end}}
         {{if .Messages}}
-        <form action="send" method="post">
-        <div class="row">
-            <textarea name="mail-text" style="width:90%; margin:auto; height:60px;"></textarea>
-        </div>
-        <div class="row">
-            <button type="sumbit" class="btn btn-default btn-lg">Send</button>
-        </div>
         {{with index .Messages 0}}
+        <form action="archive" method="post">
+            <div class="row">
+                <button type="sumbit" class="btn btn-default btn-lg">Archive</button>
+            </div>
+            <input type="hidden" name="thrid" value="{{.Thrid}}"></input>
+        </form>
+        <form action="send" method="post">
+            <div class="row">
+                <textarea name="mail-text" style="width:90%; margin:auto; height:60px;"></textarea>
+            </div>
+            <div class="row">
+                <button type="sumbit" class="btn btn-default btn-lg">Send</button>
+            </div>
         {{range .Recipients}}
         <input type="hidden" name="recipients" value="{{.}}"></input>
         {{end}}

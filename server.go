@@ -210,6 +210,32 @@ func fragmentHandler(w http.ResponseWriter, r *http.Request) {
 	io.WriteString(w, getFragment(r.FormValue("key")))
 }
 
+func archiveHandler(w http.ResponseWriter, r *http.Request) {
+	user, token, ok := getSavedCreds(w, r)
+	if !ok {
+		leakyLog(w, errors.New("not logged in"))
+		return
+	}
+	c, err := connect(user, token.AccessToken)
+	// TODO: Errors here are almost certainly either oauth failures which are my fault
+	//       or temporary network problems connecting to gmail. Users should not see this.
+	if err != nil {
+		http.Error(w, "Error connecting to gmail", http.StatusServiceUnavailable)
+		return
+	}
+	c.Select("INBOX", false)
+	defer func() {
+		c.Close(true)
+		c.Logout(5 * time.Second)
+	}()
+	if err := archive2(c, r.PostFormValue("thrid")); err != nil {
+		log.Println(err)
+		http.Error(w, "Something went wrong", http.StatusInternalServerError)
+	} else {
+		http.Redirect(w, r, "/quick-email", http.StatusFound)
+	}
+}
+
 func sendHandler(w http.ResponseWriter, r *http.Request) {
 	user, token, ok := getSavedCreds(w, r)
 	if !ok {
@@ -237,6 +263,7 @@ func main() {
 	http.Handle("/static/", http.StripPrefix("/static", http.FileServer(justFiles("static"))))
 	http.HandleFunc("/fragment", fragmentHandler)
 	http.HandleFunc("/send", sendHandler)
+	http.HandleFunc("/archive", archiveHandler)
 	log.Println("listening at", *httpAddr)
 	log.Println(http.ListenAndServe(*httpAddr, Log(http.DefaultServeMux)))
 }
