@@ -168,7 +168,7 @@ func homeHandler(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "Error connecting to gmail", http.StatusServiceUnavailable)
 			return
 		}
-		m, err := fetch(c, threads[0])
+		m, err := fetch(c, user, threads[0])
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
@@ -247,7 +247,7 @@ func sendHandler(w http.ResponseWriter, r *http.Request) {
 		leakyLog(w, errors.New("malformed request"))
 		return
 	}
-	to := "To: " + strings.Join(r.Form["named-recipients"], ",\n") + "\n"
+	to := "To: " + strings.Join(r.Form["named-recipients"], ",\n\t") + "\n"
 	msg := []byte(to + "Subject: " + r.FormValue("subject") + "\n\n" + r.FormValue("mail-text"))
 	err := smtp.SendMail("smtp.gmail.com:587", smtpAuth{user, token.AccessToken}, user, r.Form["recipients"], msg)
 	if err != nil {

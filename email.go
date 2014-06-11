@@ -132,7 +132,7 @@ func parseContent(r io.Reader, contentType string) (body []byte, foundType strin
 	return nil, "", nil
 }
 
-func parseMail(b []byte) (*ParsedMail, error) {
+func parseMail(b []byte, user string) (*ParsedMail, error) {
 	msg, err := mail.ReadMessage(bytes.NewReader(b))
 	if err != nil {
 		return nil, errors.New("failed to parse message: " + err.Error())
@@ -156,7 +156,7 @@ func parseMail(b []byte) (*ParsedMail, error) {
 		}
 		for _, a := range lst {
 			fmt.Printf("%#v\n", a)
-			if !seen[a.Address] {
+			if !seen[a.Address] && a.Address != user {
 				seen[a.Address] = true
 				parsed.Recipients = append(parsed.Recipients, a.Address)
 				parsed.NamedRecipients = append(parsed.NamedRecipients, a.String())
@@ -260,7 +260,7 @@ func getThreads(c *imap.Client) ([]Thread, error) {
 	return result, nil
 }
 
-func fetch(c *imap.Client, thread Thread) ([]*ParsedMail, error) {
+func fetch(c *imap.Client, user string, thread Thread) ([]*ParsedMail, error) {
 	var set imap.SeqSet
 	for _, uid := range thread {
 		set.AddNum(uid)
@@ -271,7 +271,7 @@ func fetch(c *imap.Client, thread Thread) ([]*ParsedMail, error) {
 	}
 	parsed := make([]*ParsedMail, len(cmd.Data))
 	for i, rsp := range cmd.Data {
-		p, err := parseMail(imap.AsBytes(rsp.MessageInfo().Attrs["BODY[]"]))
+		p, err := parseMail(imap.AsBytes(rsp.MessageInfo().Attrs["BODY[]"]), user)
 		if err != nil {
 			return nil, err
 		}
