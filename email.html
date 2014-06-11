@@ -18,7 +18,11 @@
             </div>
         </div>
         <div class="row">
-            <div id="guest{{$index}}"></div>
+            <div id="guest{{$index}}">
+                {{if .TextBody}}
+                <pre style="word-wrap: break-word; white-space: pre-wrap;">{{.TextBody}}</pre>
+                {{end}}
+            </div>
         </div>
         {{else}}
         <div class="row text-center" style="padding-top:40px">
@@ -57,10 +61,12 @@
             debug: true
         });
         {{range $index, $message := .Messages}}
+        {{if $message.BodyLink}}
         caja.load(document.getElementById('guest{{$index}}'), undefined, function(frame) {
             frame.code('{{$message.BodyLink}}', 'text/html')
                  .run();
         });
+        {{end}}
         {{end}}
     </script>
 </body>

@@ -6,7 +6,6 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
-	"html/template"
 	"io"
 	"io/ioutil"
 	"log"
@@ -63,6 +62,7 @@ func (o smtpAuth) Next(fromServer []byte, more bool) ([]byte, error) {
 
 type ParsedMail struct {
 	Header          mail.Header
+	TextBody        string
 	From            string
 	BodyLink        string
 	GmailLink       string
@@ -100,37 +100,40 @@ func sanitizeHTML(r io.Reader) ([]byte, error) {
 var textHTML = "text/html"
 var textPlain = "text/plain"
 
-func parseContent(r io.Reader, contentType string) (body []byte, foundType string, err error) {
+func parseContent(r io.Reader, contentType string) (htmlBody, textBody []byte, err error) {
 	media, params, _ := mime.ParseMediaType(contentType)
 	switch {
 	case media == textHTML, media == textPlain:
 		r, err = charset.NewReader(r, params["charset"])
 		if err != nil {
-			return nil, "", err
+			return nil, nil, err
 		}
-		body, err = ioutil.ReadAll(r)
-		return body, media, err
+		body, err := ioutil.ReadAll(r)
+		if media == textHTML {
+			return body, nil, err
+		}
+		return nil, body, err
 	case strings.HasPrefix(media, "multipart"):
 		mp := multipart.NewReader(r, params["boundary"])
-		var tmp []byte
 		for {
 			part, err := mp.NextPart()
 			if err != nil {
-				return nil, "", err
+				return nil, nil, err
 			}
-			if tmp, foundType, err = parseContent(part, part.Header.Get("Content-Type")); err == nil {
-				body = tmp
-				if foundType == textHTML {
+			if tmpHTML, tmpText, err := parseContent(part, part.Header.Get("Content-Type")); err == nil {
+				if tmpHTML != nil {
+					htmlBody = tmpHTML
+				}
+				if tmpText != nil {
+					textBody = tmpText
+				}
+				if htmlBody != nil && textBody != nil {
 					break
-				} // else keep fishing for a text/html part
+				}
 			}
 		}
-		if body == nil {
-			foundType = ""
-		}
-		return body, foundType, nil
 	}
-	return nil, "", nil
+	return htmlBody, textBody, nil
 }
 
 func parseMail(b []byte, user string) (*ParsedMail, error) {
@@ -138,17 +141,17 @@ func parseMail(b []byte, user string) (*ParsedMail, error) {
 	if err != nil {
 		return nil, errors.New("failed to parse message: " + err.Error())
 	}
-	body, foundType, err := parseContent(msg.Body, msg.Header.Get("Content-Type"))
+	htmlBody, textBody, err := parseContent(msg.Body, msg.Header.Get("Content-Type"))
 	if err != nil {
-		body = []byte("failed to parse content. view in gmail")
+		textBody = []byte("failed to parse content. view in gmail")
 	}
 	parsed := &ParsedMail{Header: msg.Header}
-	if foundType == textPlain {
-		body = []byte("<pre style=\"word-wrap: break-word; white-space: pre-wrap;\">" + template.HTMLEscapeString(string(body)) + "</pre>")
+	parsed.TextBody = string(textBody)
+	if htmlBody != nil {
+		key := genKey()
+		saveFragment(key, string(htmlBody))
+		parsed.BodyLink = "fragment?key=" + key
 	}
-	key := genKey()
-	saveFragment(key, string(body))
-	parsed.BodyLink = "fragment?key=" + key
 	seen := make(map[string]bool)
 	for _, f := range []string{"To", "From", "Cc"} {
 		lst, err := msg.Header.AddressList(f)
