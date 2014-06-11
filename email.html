@@ -10,7 +10,7 @@
         {{range $index, $message := .Messages}}
         <div class="row">
             <div class="col-md-4">
-                <span class="sender">{{$message.Header.Get "From"}}</span>
+                <span class="sender">{{$message.From}}</span>
                 <span class="timestamp">{{$message.Header.Get "Date"}}</span>
             </div>
             <div class="col-md-8">

@@ -63,6 +63,7 @@ func (o smtpAuth) Next(fromServer []byte, more bool) ([]byte, error) {
 
 type ParsedMail struct {
 	Header          mail.Header
+	From            string
 	BodyLink        string
 	GmailLink       string
 	Recipients      []string
@@ -162,6 +163,12 @@ func parseMail(b []byte, user string) (*ParsedMail, error) {
 				parsed.NamedRecipients = append(parsed.NamedRecipients, a.String())
 			}
 		}
+	}
+	a, err := mail.ParseAddress(msg.Header.Get("From"))
+	if err != nil {
+		parsed.From = msg.Header.Get("From")
+	} else {
+		parsed.From = fmt.Sprintf("%s <%s>", a.Name, a.Address)
 	}
 	return parsed, nil
 }
