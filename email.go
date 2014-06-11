@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"code.google.com/p/go.net/html/charset"
+	"github.com/ThomsonReutersEikon/mailstrip"
 	"github.com/mxk/go-imap/imap"
 )
 
@@ -100,34 +101,35 @@ func sanitizeHTML(r io.Reader) ([]byte, error) {
 var textHTML = "text/html"
 var textPlain = "text/plain"
 
-func parseContent(r io.Reader, contentType string) (htmlBody, textBody []byte, err error) {
+func parseContent(r io.Reader, contentType string) (htmlBody, textBody string, err error) {
 	media, params, _ := mime.ParseMediaType(contentType)
 	switch {
 	case media == textHTML, media == textPlain:
 		r, err = charset.NewReader(r, params["charset"])
 		if err != nil {
-			return nil, nil, err
+			return "", "", err
 		}
 		body, err := ioutil.ReadAll(r)
+		s := mailstrip.Parse(string(body)).String()
 		if media == textHTML {
-			return body, nil, err
+			return s, "", err
 		}
-		return nil, body, err
+		return "", s, err
 	case strings.HasPrefix(media, "multipart"):
 		mp := multipart.NewReader(r, params["boundary"])
 		for {
 			part, err := mp.NextPart()
 			if err != nil {
-				return nil, nil, err
+				return "", "", err
 			}
 			if tmpHTML, tmpText, err := parseContent(part, part.Header.Get("Content-Type")); err == nil {
-				if tmpHTML != nil {
+				if tmpHTML != "" {
 					htmlBody = tmpHTML
 				}
-				if tmpText != nil {
+				if tmpText != "" {
 					textBody = tmpText
 				}
-				if htmlBody != nil && textBody != nil {
+				if htmlBody != "" && textBody != "" {
 					break
 				}
 			}
@@ -143,13 +145,13 @@ func parseMail(b []byte, user string) (*ParsedMail, error) {
 	}
 	htmlBody, textBody, err := parseContent(msg.Body, msg.Header.Get("Content-Type"))
 	if err != nil {
-		textBody = []byte("failed to parse content. view in gmail")
+		textBody = "failed to parse content. view in gmail"
 	}
 	parsed := &ParsedMail{Header: msg.Header}
-	parsed.TextBody = string(textBody)
-	if htmlBody != nil {
+	parsed.TextBody = textBody
+	if htmlBody != "" {
 		key := genKey()
-		saveFragment(key, string(htmlBody))
+		saveFragment(key, htmlBody)
 		parsed.BodyLink = "fragment?key=" + key
 	}
 	seen := make(map[string]bool)
