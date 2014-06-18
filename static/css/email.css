@@ -2,3 +2,7 @@ div.embedded {
     width: 80%;
     margin: auto;
 }
+
+.gmail_extra {
+    display: none;
+}
