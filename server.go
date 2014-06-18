@@ -254,7 +254,7 @@ func archiveHandler(w http.ResponseWriter, r *http.Request) {
 		c.Close(true)
 		c.Logout(5 * time.Second)
 	}()
-	if err := archive2(c, r.PostFormValue("thrid")); err != nil {
+	if err := archive(c, r.PostFormValue("thrid")); err != nil {
 		log.Println(err)
 		http.Error(w, "Something went wrong", http.StatusInternalServerError)
 	} else {

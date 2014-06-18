@@ -15,7 +15,6 @@ import (
 	"net/mail"
 	"net/smtp"
 	"os"
-	"os/exec"
 	"strconv"
 	"strings"
 	"sync"
@@ -74,32 +73,6 @@ type ParsedMail struct {
 	Recipients      []string
 	NamedRecipients []string
 	Thrid           string
-}
-
-func sanitizeHTML(r io.Reader) ([]byte, error) {
-	cmd := exec.Command("js", "sanitize.js")
-	stdin, err := cmd.StdinPipe()
-	if err != nil {
-		return nil, err
-	}
-	stdout, err := cmd.StdoutPipe()
-	if err != nil {
-		return nil, err
-	}
-	if err = cmd.Start(); err != nil {
-		return nil, err
-	}
-	if _, err = io.Copy(stdin, r); err != nil {
-		return nil, err
-	}
-	if err = stdin.Close(); err != nil {
-		return nil, err
-	}
-	san, err := ioutil.ReadAll(stdout)
-	if err != nil {
-		return nil, err
-	}
-	return san, cmd.Wait()
 }
 
 var textHTML = "text/html"
@@ -185,7 +158,7 @@ func parseMail(b []byte, user string) (*ParsedMail, error) {
 	return parsed, nil
 }
 
-func archive2(c *imap.Client, thrid string) error {
+func archive(c *imap.Client, thrid string) error {
 	cmd, err := imap.Wait(c.UIDSearch("X-GM-THRID", thrid))
 	if err != nil {
 		log.Println(err)
