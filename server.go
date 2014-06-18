@@ -190,7 +190,6 @@ func homeHandler(w http.ResponseWriter, r *http.Request) {
 		if err := session.Save(r, w); err != nil {
 			leakyLog(w, errors.New("Problem saving session: "+err.Error()))
 		}
-		log.Println("session saved")
 		data.Messages = m
 		data.Threads = threads
 	}
@@ -283,7 +282,15 @@ func sendHandler(w http.ResponseWriter, r *http.Request) {
 		Text:    []byte(r.FormValue("mail-text")),
 		Headers: textproto.MIMEHeader{},
 	}
-	msg.Headers.Add("In-Reply-To", m.Header.Get("Message-ID"))
+	if msgid := m.Header.Get("Message-ID"); msgid != "" {
+		msg.Headers.Add("In-Reply-To", msgid)
+		r := m.Header.Get("References")
+		if r != "" {
+			r += " "
+		}
+		r += msgid
+		msg.Headers.Add("References", r)
+	}
 	err = msg.Send("smtp.gmail.com:587", smtpAuth{user, token.AccessToken})
 	if err != nil {
 		leakyLog(w, err)
