@@ -270,7 +270,7 @@ func sendHandler(w http.ResponseWriter, r *http.Request) {
 		leakyLog(w, err)
 		return
 	}
-	_ = session.Values["last-message"].(*ParsedMail)
+	m := session.Values["last-message"].(*ParsedMail)
 	if s, c := session.Values["check-value"].(string), r.FormValue("check"); s != c {
 		leakyLog(w, errors.New("error processing your request"))
 		log.Printf("Server check: %s, client check: %s\n", s, c)
@@ -283,6 +283,7 @@ func sendHandler(w http.ResponseWriter, r *http.Request) {
 		Text:    []byte(r.FormValue("mail-text")),
 		Headers: textproto.MIMEHeader{},
 	}
+	msg.Headers.Add("In-Reply-To", m.Header.Get("Message-ID"))
 	err = msg.Send("smtp.gmail.com:587", smtpAuth{user, token.AccessToken})
 	if err != nil {
 		leakyLog(w, err)
