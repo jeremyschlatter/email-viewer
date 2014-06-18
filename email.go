@@ -119,6 +119,9 @@ func parseContent(r io.Reader, contentType string) (htmlBody, textBody string, e
 		mp := multipart.NewReader(r, params["boundary"])
 		for {
 			part, err := mp.NextPart()
+			if err == io.EOF {
+				break
+			}
 			if err != nil {
 				return "", "", err
 			}
@@ -146,6 +149,7 @@ func parseMail(b []byte, user string) (*ParsedMail, error) {
 	htmlBody, textBody, err := parseContent(msg.Body, msg.Header.Get("Content-Type"))
 	if err != nil {
 		textBody = "failed to parse content. view in gmail"
+		fmt.Println(err)
 	}
 	parsed := &ParsedMail{Header: msg.Header}
 	parsed.TextBody = textBody
