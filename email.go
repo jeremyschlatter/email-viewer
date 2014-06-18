@@ -150,7 +150,7 @@ func parseMail(b []byte, user string) (*ParsedMail, error) {
 	parsed := &ParsedMail{Header: msg.Header}
 	parsed.TextBody = textBody
 	if htmlBody != "" {
-		key := genKey()
+		key := genKey(64)
 		saveFragment(key, htmlBody)
 		parsed.BodyLink = "fragment?key=" + key
 	}
@@ -162,7 +162,7 @@ func parseMail(b []byte, user string) (*ParsedMail, error) {
 		}
 		for _, a := range lst {
 			fmt.Printf("%#v\n", a)
-			if !seen[a.Address] && a.Address != user {
+			if !seen[a.Address] && (a.Address != user || f == "From") {
 				seen[a.Address] = true
 				parsed.Recipients = append(parsed.Recipients, a.Address)
 				parsed.NamedRecipients = append(parsed.NamedRecipients, a.String())
@@ -193,8 +193,8 @@ func archive2(c *imap.Client, thrid string) error {
 	return err
 }
 
-func genKey() string {
-	b := make([]byte, 64)
+func genKey(length int) string {
+	b := make([]byte, length)
 	if _, err := rand.Read(b); err != nil {
 		for i := range b {
 			b[i] = byte(unsafeRand.Uint32())
@@ -261,6 +261,9 @@ func getThreads(c *imap.Client) ([]Thread, error) {
 	seen := make(map[string]int)
 	for _, rsp := range cmd.Data {
 		thrid := imap.AsString(rsp.MessageInfo().Attrs["X-GM-THRID"])
+		if thrid != "1471205911994834168" {
+			continue
+		}
 		uid := imap.AsNumber(rsp.MessageInfo().Attrs["UID"])
 		if i, ok := seen[thrid]; ok {
 			result[i] = append(result[i], uid)

@@ -33,7 +33,7 @@
         </div>
         {{end}}
         {{if .Messages}}
-        {{with index .Messages 0}}
+            {{with index .Messages 0}}
         <form action="archive" method="post">
             <div class="row">
                 <button type="sumbit" class="btn btn-default btn-lg">Archive</button>
@@ -47,15 +47,16 @@
             <div class="row">
                 <button type="sumbit" class="btn btn-default btn-lg">Send</button>
             </div>
-        {{range .Recipients}}
+                {{range .Recipients}}
         <input type="hidden" name="recipients" value="{{.}}"></input>
-        {{end}}
-        {{range .NamedRecipients}}
+                {{end}}
+                {{range .NamedRecipients}}
         <input type="hidden" name="named-recipients" value="{{.}}"></input>
-        {{end}}
+                {{end}}
         <input type="hidden" name="subject" value="{{.Header.Get "Subject"}}"></input>
+            {{end}}
+        <input type="hidden" name="check" value="{{.CheckValue}}"></input>
         </form>
-        {{end}}
         {{end}}
     </div>
     <script>

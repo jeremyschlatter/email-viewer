@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/base64"
+	"encoding/gob"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -9,14 +10,16 @@ import (
 	"io"
 	"log"
 	"net/http"
-	"net/smtp"
+	"net/textproto"
 	"os"
-	"strings"
 	"time"
 
 	"code.google.com/p/goauth2/oauth"
 	"code.google.com/p/google-api-go-client/plus/v1"
+	"github.com/gorilla/context"
 	"github.com/gorilla/securecookie"
+	"github.com/gorilla/sessions"
+	sendmail "github.com/jordan-wright/email"
 )
 
 var httpAddr = flag.String("http", ":8080", "port to listen to")
@@ -31,28 +34,31 @@ type serverConfig struct {
 }
 
 var s *securecookie.SecureCookie
+var store sessions.Store
 
-func checkInitError(err error) {
+func check(err error) {
 	if err != nil {
 		log.Fatal(err)
 	}
 }
 
 func init() {
+	gob.Register(&ParsedMail{})
 	file, err := os.Open("server-config.json")
-	checkInitError(err)
+	check(err)
 	var c serverConfig
-	checkInitError(json.NewDecoder(file).Decode(&c))
+	check(json.NewDecoder(file).Decode(&c))
 	config.ClientId = c.ClientID
 	config.ClientSecret = c.ClientSecret
 	hashKey, err := base64.StdEncoding.DecodeString(c.CookieHashKey)
-	checkInitError(err)
+	check(err)
 	blockKey, err := base64.StdEncoding.DecodeString(c.CookieBlockKey)
-	checkInitError(err)
+	check(err)
 	if len(hashKey) != 64 || len(blockKey) != 32 {
 		log.Fatal("bad key lengths")
 	}
 	s = securecookie.New(hashKey, blockKey)
+	store = sessions.NewFilesystemStore("/home/ubuntu/fsstore", hashKey, blockKey)
 }
 
 var config = &oauth.Config{
@@ -70,6 +76,7 @@ type Data struct {
 	LoggedIn     bool
 	AuthURL      string
 	Threads      []Thread
+	CheckValue   string
 }
 
 type Person struct {
@@ -129,7 +136,12 @@ func homeHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "whoops, something broke. sorry!", http.StatusInternalServerError)
 		return
 	}
-	data := Data{AuthURL: config.AuthCodeURL("")}
+	data := Data{AuthURL: config.AuthCodeURL(""), CheckValue: genKey(16)}
+	session, err := store.Get(r, "email-session")
+	if err != nil {
+		leakyLog(w, errors.New("Problem getting session: "+err.Error()))
+		return
+	}
 	user, token, ok := getSavedCreds(w, r)
 	if !ok && r.FormValue("code") != "" {
 		t := &oauth.Transport{Config: config}
@@ -173,6 +185,12 @@ func homeHandler(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
+		session.Values["last-message"] = m[len(m)-1]
+		session.Values["check-value"] = data.CheckValue
+		if err := session.Save(r, w); err != nil {
+			leakyLog(w, errors.New("Problem saving session: "+err.Error()))
+		}
+		log.Println("session saved")
 		data.Messages = m
 		data.Threads = threads
 	}
@@ -247,9 +265,25 @@ func sendHandler(w http.ResponseWriter, r *http.Request) {
 		leakyLog(w, errors.New("malformed request"))
 		return
 	}
-	to := "To: " + strings.Join(r.Form["named-recipients"], ",\n\t") + "\n"
-	msg := []byte(to + "Subject: " + r.FormValue("subject") + "\n\n" + r.FormValue("mail-text"))
-	err := smtp.SendMail("smtp.gmail.com:587", smtpAuth{user, token.AccessToken}, user, r.Form["recipients"], msg)
+	session, err := store.Get(r, "email-session")
+	if err != nil {
+		leakyLog(w, err)
+		return
+	}
+	_ = session.Values["last-message"].(*ParsedMail)
+	if s, c := session.Values["check-value"].(string), r.FormValue("check"); s != c {
+		leakyLog(w, errors.New("error processing your request"))
+		log.Printf("Server check: %s, client check: %s\n", s, c)
+		return
+	}
+	msg := &sendmail.Email{
+		To:      r.Form["named-recipients"],
+		From:    user,
+		Subject: r.FormValue("subject"),
+		Text:    []byte(r.FormValue("mail-text")),
+		Headers: textproto.MIMEHeader{},
+	}
+	err = msg.Send("smtp.gmail.com:587", smtpAuth{user, token.AccessToken})
 	if err != nil {
 		leakyLog(w, err)
 		return
@@ -266,5 +300,5 @@ func main() {
 	http.HandleFunc("/send", sendHandler)
 	http.HandleFunc("/archive", archiveHandler)
 	log.Println("listening at", *httpAddr)
-	log.Println(http.ListenAndServe(*httpAddr, Log(http.DefaultServeMux)))
+	log.Println(http.ListenAndServe(*httpAddr, context.ClearHandler(Log(http.DefaultServeMux))))
 }
