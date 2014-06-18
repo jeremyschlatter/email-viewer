@@ -21,7 +21,7 @@
         <div class="row">
             {{if .TextBody}}
             <div id="textPlain{{$index}}">
-                <pre style="word-wrap: break-word; white-space: pre-wrap;">{{.TextBody}}</pre>
+                <pre style="word-wrap: break-word; white-space: pre-wrap;">{{mailstrip .TextBody}}</pre>
             </div>
             {{end}}
             <div id="guest{{$index}}">

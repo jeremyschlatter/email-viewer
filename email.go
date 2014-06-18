@@ -61,6 +61,10 @@ func (o smtpAuth) Next(fromServer []byte, more bool) ([]byte, error) {
 	return nil, nil
 }
 
+func Strip(s string) string {
+	return mailstrip.Parse(s).String()
+}
+
 type ParsedMail struct {
 	Header          mail.Header
 	TextBody        string
@@ -110,7 +114,7 @@ func parseContent(r io.Reader, contentType string) (htmlBody, textBody string, e
 			return "", "", err
 		}
 		body, err := ioutil.ReadAll(r)
-		s := mailstrip.Parse(string(body)).String()
+		s := string(body)
 		if media == textHTML {
 			return s, "", err
 		}
@@ -155,7 +159,7 @@ func parseMail(b []byte, user string) (*ParsedMail, error) {
 	parsed.TextBody = textBody
 	if htmlBody != "" {
 		key := genKey(64)
-		saveFragment(key, htmlBody)
+		saveFragment(key, Strip(htmlBody))
 		parsed.BodyLink = "fragment?key=" + key
 	}
 	seen := make(map[string]bool)

@@ -6,16 +6,20 @@ import (
 	"encoding/json"
 	"errors"
 	"flag"
+	"fmt"
 	"html/template"
 	"io"
 	"log"
 	"net/http"
+	"net/mail"
 	"net/textproto"
 	"os"
+	"strings"
 	"time"
 
 	"code.google.com/p/goauth2/oauth"
 	"code.google.com/p/google-api-go-client/plus/v1"
+	"github.com/ThomsonReutersEikon/mailstrip"
 	"github.com/gorilla/context"
 	"github.com/gorilla/securecookie"
 	"github.com/gorilla/sessions"
@@ -58,7 +62,9 @@ func init() {
 		log.Fatal("bad key lengths")
 	}
 	s = securecookie.New(hashKey, blockKey)
-	store = sessions.NewFilesystemStore("/home/ubuntu/fsstore", hashKey, blockKey)
+	fss := sessions.NewFilesystemStore("/home/ubuntu/fsstore", hashKey, blockKey)
+	fss.MaxLength(1024 * 1024)
+	store = fss
 }
 
 var config = &oauth.Config{
@@ -130,7 +136,9 @@ func getSavedCreds(w http.ResponseWriter, r *http.Request) (user string, token *
 }
 
 func homeHandler(w http.ResponseWriter, r *http.Request) {
-	homeTemplate, err := template.ParseFiles("email.html")
+	homeTemplate, err := template.New("home").
+		Funcs(template.FuncMap{"mailstrip": Strip}).
+		ParseFiles("email.html")
 	if err != nil {
 		log.Println(err)
 		http.Error(w, "whoops, something broke. sorry!", http.StatusInternalServerError)
@@ -193,7 +201,7 @@ func homeHandler(w http.ResponseWriter, r *http.Request) {
 		data.Messages = m
 		data.Threads = threads
 	}
-	if err = homeTemplate.Execute(w, data); err != nil {
+	if err = homeTemplate.ExecuteTemplate(w, "email.html", data); err != nil {
 		log.Println(err)
 	}
 }
@@ -275,11 +283,13 @@ func sendHandler(w http.ResponseWriter, r *http.Request) {
 		log.Printf("Server check: %s, client check: %s\n", s, c)
 		return
 	}
+	text := r.FormValue("mail-text")
+	text += fmt.Sprintf("\n\n\n%s\n\n%s", theyWrote(m.Header), blockquote(m.TextBody))
 	msg := &sendmail.Email{
 		To:      r.Form["named-recipients"],
 		From:    user,
 		Subject: r.FormValue("subject"),
-		Text:    []byte(r.FormValue("mail-text")),
+		Text:    []byte(text),
 		Headers: textproto.MIMEHeader{},
 	}
 	if msgid := m.Header.Get("Message-ID"); msgid != "" {
@@ -299,9 +309,45 @@ func sendHandler(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/quick-email", http.StatusFound)
 }
 
+func blockquote(s string) string {
+	stripped := mailstrip.Parse(s).String()
+	r := strings.Replace("\n"+stripped, "\n", "\n> ", -1)
+	i := consume(s, stripped)
+	if i < len(s) {
+		for _, line := range strings.Split(s[i:], "\n") {
+			if line == "" || line[0] == '>' {
+				r += "\n>" + line
+			} else {
+				r += "\n> " + line
+			}
+		}
+	}
+	return r
+}
+
+func consume(s, prefix string) int {
+	i := 0
+	for j := 0; j < len(prefix); j++ {
+		for ; s[i] != s[j]; i++ {
+			if i == len(s)-1 {
+				return -1
+			}
+		}
+	}
+	return i + 1
+}
+
+func theyWrote(h mail.Header) string {
+	var r string
+	t, err := h.Date()
+	if err == nil {
+		r = t.Format("On Mon, Jan 2, 2006 at 3:04 PM, ")
+	}
+	return r + h.Get("From") + " wrote:"
+}
+
 func main() {
 	flag.Parse()
-	template.Must(template.ParseFiles("email.html"))
 	http.HandleFunc("/", homeHandler)
 	http.Handle("/static/", http.StripPrefix("/static", http.FileServer(justFiles("static"))))
 	http.HandleFunc("/fragment", fragmentHandler)
