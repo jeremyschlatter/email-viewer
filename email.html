@@ -5,6 +5,19 @@
     <meta charset="utf-8">
     <script src="//caja.appspot.com/caja.js"></script>
     <link href="static/css/email.css" rel="stylesheet">
+    <script type="text/javascript">
+         function calcHeight()
+         {
+         //find the height of the internal page
+         var the_height=
+         document.getElementById('the_iframe').contentWindow.
+         document.body.scrollHeight;
+
+         //change the height of the iframe
+         document.getElementById('the_iframe').height=
+         the_height;
+         }
+    </script>
 </head>
 <body>
     <div class="container-fluid">
@@ -19,12 +32,8 @@
             </div>
         </div>
         <div class="row">
-            {{if .TextBody}}
-            <div id="textPlain{{$index}}">
-                <pre style="word-wrap: break-word; white-space: pre-wrap;">{{mailstrip .TextBody}}</pre>
-            </div>
-            {{end}}
             <div id="guest{{$index}}">
+                <iframe id="the_iframe" onload="calcHeight();" height="1px" sandbox="allow-same-origin" src="{{.BodyLink}}"></iframe>
             </div>
         </div>
         {{else}}
@@ -64,8 +73,9 @@
             cajaServer: 'https://caja.appspot.com/',
             debug: true
         });
+    {{ if 0 eq 1 }}
         {{range $index, $message := .Messages}}
-        {{if $message.BodyLink}}
+            {{if $message.BodyLink}}
         caja.load(document.getElementById('guest{{$index}}'), undefined, function(frame) {
             frame.code('{{$message.BodyLink}}', 'text/html')
             .run(function(){
@@ -73,8 +83,9 @@
                 node.parentNode.removeChild(node);
             });
         });
+            {{end}}
         {{end}}
-        {{end}}
+    {{end}}
     </script>
 </body>
 </html>
