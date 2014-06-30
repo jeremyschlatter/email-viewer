@@ -22,8 +22,13 @@ import (
 
 	"code.google.com/p/go.net/html/charset"
 	"github.com/ThomsonReutersEikon/mailstrip"
+	"github.com/jeremyschlatter/shellout"
 	"github.com/mxk/go-imap/imap"
 )
+
+func sanitized(r io.Reader) (io.Reader, error) {
+	return shellout.Start(r, "ruby", "sanitize.rb")
+}
 
 func init() {
 	imap.DefaultLogger = log.New(os.Stdout, "", 0)
@@ -85,6 +90,12 @@ func parseContent(r io.Reader, contentType string) (htmlBody, textBody string, e
 		r, err = charset.NewReader(r, params["charset"])
 		if err != nil {
 			return "", "", err
+		}
+		if media == textHTML {
+			r, err = sanitized(r)
+			if err != nil {
+				return "", "", err
+			}
 		}
 		body, err := ioutil.ReadAll(r)
 		s := string(body)
@@ -241,9 +252,6 @@ func getThreads(c *imap.Client) ([]Thread, error) {
 	seen := make(map[string]int)
 	for _, rsp := range cmd.Data {
 		thrid := imap.AsString(rsp.MessageInfo().Attrs["X-GM-THRID"])
-		if thrid != "1471205911994834168" {
-			continue
-		}
 		uid := imap.AsNumber(rsp.MessageInfo().Attrs["UID"])
 		if i, ok := seen[thrid]; ok {
 			result[i] = append(result[i], uid)
